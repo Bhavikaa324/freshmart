@@ -1,18 +1,13 @@
 import logging
-from backend.db import client, DB_NAME
+from backend.db import get_transcript_collection
 
 logger = logging.getLogger(__name__)
 
-try:
-    if client is not None:
-        db = client[DB_NAME]
-        collection = db["transcripts"]
-    else:
-        collection = None
-except Exception:
-    collection = None
+def _collection():
+    return get_transcript_collection()
 
 def add_message(user_id: str, role: str, text: str):
+    collection = _collection()
     if collection is None:
         return
     try:
@@ -25,6 +20,7 @@ def add_message(user_id: str, role: str, text: str):
         logger.error(f"Save transcript error: {e}")
 
 def get_messages(user_id: str) -> list:
+    collection = _collection()
     if collection is None:
         return []
     try:
@@ -36,6 +32,7 @@ def get_messages(user_id: str) -> list:
     return []
 
 def clear_messages(user_id: str):
+    collection = _collection()
     if collection is None:
         return
     try:

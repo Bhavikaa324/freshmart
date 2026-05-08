@@ -75,18 +75,95 @@ def _format_list_for_prompt(shopping_list: list) -> str:
 
 
 OFF_CACHE = {}
+GOOGLE_IMAGE_CACHE = {}
 
-async def fetch_openfoodfacts(item: str) -> dict:
+
+async def fetch_google_image(item: str) -> str:
+    item_lower = item.lower()
+    if item_lower in GOOGLE_IMAGE_CACHE:
+        return GOOGLE_IMAGE_CACHE[item_lower]
+
+    api_key = os.getenv("GOOGLE_SEARCH_API_KEY", "").strip()
+    search_engine_id = os.getenv("GOOGLE_SEARCH_ENGINE_ID", "").strip()
+    if not api_key or not search_engine_id:
+        GOOGLE_IMAGE_CACHE[item_lower] = ""
+        return ""
+
+    image_url = ""
+    try:
+        query = f"{item} grocery product"
+        params = {
+            "key": api_key,
+            "cx": search_engine_id,
+            "q": query,
+            "searchType": "image",
+            "num": 1,
+            "safe": "active",
+        }
+        url = "https://www.googleapis.com/customsearch/v1"
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, params=params, timeout=4) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    items = data.get("items", [])
+                    if items:
+                        image_url = items[0].get("link", "")
+                else:
+                    body = await resp.text()
+                    logger.warning(
+                        f"Google Image Search returned status={resp.status} for {item}. Body={body[:300]!r}"
+                    )
+    except Exception as e:
+        logger.error(f"Google Image Search API error for {item}: {e!r}")
+
+    GOOGLE_IMAGE_CACHE[item_lower] = image_url
+    return image_url
+
+PLACEHOLDERS = {
+    "vegetable": "vegetable-placeholder.png",
+    "fruit": "fruit-placeholder.png",
+    "dairy": "dairy-placeholder.png",
+    "liquid": "liquid-placeholder.png",
+    "grains": "grains-placeholder.png",
+    "spices": "spices-placeholder.png",
+    "packaged": "default-placeholder.png",
+    "default": "default-placeholder.png",
+}
+
+
+def infer_category(item: str) -> str:
+    item_lower = item.lower()
+    if any(x in item_lower for x in ["water", "oil", "juice", "liquid", "beverage", "soda", "drink"]):
+        return "liquid"
+    if any(x in item_lower for x in ["cheese", "butter", "paneer", "dahi", "curd", "yogurt", "cream", "ghee","milk"]):
+        return "dairy"
+    if any(x in item_lower for x in ["apple", "banana", "mango", "orange", "grape", "berry", "fruit", "strawberry"]):
+        return "fruit"
+    if any(x in item_lower for x in ["tomato", "potato", "onion", "vegetable", "carrot", "garlic", "ginger", "spinach", "cabbage", "cauliflower"]):
+        return "vegetable"
+    if any(x in item_lower for x in ["rice", "flour", "sugar", "wheat", "dal", "lentil", "grain"]):
+        return "grains"
+    if any(x in item_lower for x in ["spice", "pepper", "salt", "cumin", "powder", "turmeric", "masala"]):
+        return "spices"
+    if any(x in item_lower for x in ["biscuit", "bread", "maggi", "cookie", "packet", "snack", "pav", "chips", "chocolate"]):
+        return "packaged"
+    return "default"
+
+
+async def fetch_openfoodfacts(item: str, category: str = None) -> dict:
     item_lower = item.lower()
     if item_lower in OFF_CACHE:
-        return OFF_CACHE[item_lower]
+        res = OFF_CACHE[item_lower]
+        cat = category or infer_category(item)
+        res["image_url"] = PLACEHOLDERS.get(cat.lower(), PLACEHOLDERS["default"])
+        return res
     
     res_data = {}
     try:
         url = f"https://world.openfoodfacts.org/cgi/search.pl?search_terms={urllib.parse.quote(item)}&search_simple=1&action=process&json=1&page_size=1"
         headers = {"User-Agent": "FreshMartAI/1.0"}
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers, timeout=3) as resp:
+            async with session.get(url, headers=headers, timeout=8) as resp:
                 if resp.status == 200:
                     data = await resp.json()
                     products = data.get("products", [])
@@ -106,12 +183,13 @@ async def fetch_openfoodfacts(item: str) -> dict:
                             res_data["unit"] = unit
                         if qty:
                             res_data["quantity"] = float(qty)
-                        
-                        img_url = p.get("image_front_small_url") or p.get("image_small_url") or p.get("image_url")
-                        if img_url:
-                            res_data["image_url"] = img_url
+
+        # Do not fetch any image URLs from Open Food Facts or online search APIs.
+        # Always use the corresponding category placeholder.
+        cat = category or infer_category(item)
+        res_data["image_url"] = PLACEHOLDERS.get(cat.lower(), PLACEHOLDERS["default"])
     except Exception as e:
-        logger.error(f"OpenFoodFacts API error for {item}: {e}")
+        logger.error(f"OpenFoodFacts API error for {item}: {e!r}")
         
     OFF_CACHE[item_lower] = res_data
     return res_data
@@ -313,7 +391,7 @@ async def run_llm(user_id: str, user_message: str) -> tuple:
                 if unit is None or unit == "":
                     unit = await infer_unit(item)
                 
-                api_data = await fetch_openfoodfacts(item)
+                api_data = await fetch_openfoodfacts(item, category=cat)
                 img_url = api_data.get("image_url", "")
                 
                 qty_str = format_item_quantity(quantity, unit)

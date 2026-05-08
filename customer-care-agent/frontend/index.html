@@ -773,7 +773,7 @@
         container.innerHTML = items.map(item => `
             <div class="list-item">
                 <div class="item-info">
-                    <div class="item-icon">${item.image_url ? `<img src="${item.image_url}" alt="${item.name}" style="width:100%; height:100%; object-fit:cover; border-radius:10px;">` : '🛍️'}</div>
+                    <div class="item-icon">${item.image_url ? `<img src="${item.image_url}" alt="${item.name}" style="width:100%; height:100%; object-fit:cover; border-radius:10px;" onerror="this.onerror=null; this.src='${['vegetable', 'fruit', 'dairy', 'spices', 'liquid', 'grains'].includes((item.category || '').toLowerCase()) ? (item.category || '').toLowerCase() + '-placeholder.png' : 'default-placeholder.png'}';">` : '🛍️'}</div>
                     <div class="item-details">
                         <div class="item-name">${item.name}</div>
                         ${item.category ? `<div class="item-category">${item.category}</div>` : ''}
